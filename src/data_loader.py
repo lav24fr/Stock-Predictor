@@ -4,6 +4,14 @@ import numpy as np
 from textblob import TextBlob
 from sklearn.preprocessing import MinMaxScaler
 import torch
+import nltk
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+# Ensure VADER lexicon is downloaded
+try:
+    nltk.data.find('sentiment/vader_lexicon.zip')
+except LookupError:
+    nltk.download('vader_lexicon')
 
 class DataLoader:
     def __init__(self, ticker, start_date, end_date):
@@ -12,6 +20,7 @@ class DataLoader:
         self.end_date = end_date
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.data = None
+        self.sia = SentimentIntensityAnalyzer()
 
     def fetch_stock_data(self):
         """Fetches historical stock data from yfinance."""
@@ -26,21 +35,62 @@ class DataLoader:
 
     def fetch_news_sentiment(self):
         """
-        Fetches news from yfinance and calculates average sentiment.
-        Note: Historical news is hard to get for free. This fetches *recent* news
-        and applies a dummy sentiment for historical illustration if actual data isn't available.
+        Fetches news from yfinance and calculates weighted average sentiment using VADER.
+        Prioritizes news that explicitly mentions the ticker or company name.
+        Returns:
+            avg_sentiment (float): Weighted Mean compound score.
+            details (list): List of dicts with 'title', 'score', 'relevant'.
         """
         ticker_obj = yf.Ticker(self.ticker)
         news = ticker_obj.news
         
-        sentiments = []
-        for article in news:
-            title = article.get('title', '')
-            blob = TextBlob(title)
-            sentiments.append(blob.sentiment.polarity)
+        # Try to get short name for better matching (e.g. "Apple" from "Apple Inc.")
+        # We wrap in try/except because .info can sometimes be flaky/slow
+        company_name = self.ticker
+        try:
+            info = ticker_obj.info
+            if info and 'shortName' in info:
+                # Simplify name: "Apple Inc." -> "Apple"
+                company_name = info['shortName'].split(' ')[0]
+        except Exception:
+            pass # Fallback to ticker
+            
+        results = []
+        weighted_scores = []
+        weights = []
         
-        avg_sentiment = np.mean(sentiments) if sentiments else 0
-        return avg_sentiment
+        for article in news:
+            # Handle nested structure if present (common in newer yfinance versions)
+            if 'content' in article and isinstance(article['content'], dict):
+                title = article['content'].get('title', '')
+            else:
+                title = article.get('title', '')
+                
+            score = self.sia.polarity_scores(title)['compound']
+            
+            # Relevance Check
+            is_relevant = False
+            if self.ticker.lower() in title.lower() or company_name.lower() in title.lower():
+                is_relevant = True
+                
+            # Weighting
+            weight = 1.0 if is_relevant else 0.2
+            
+            results.append({
+                'Title': title,
+                'Score': score,
+                'Relevant': "Yes" if is_relevant else "No"
+            })
+            
+            weighted_scores.append(score * weight)
+            weights.append(weight)
+        
+        if weights:
+            avg_sentiment = np.sum(weighted_scores) / np.sum(weights)
+        else:
+            avg_sentiment = 0
+            
+        return avg_sentiment, results
 
     def preprocess_data(self, sequence_length=60):
         """
