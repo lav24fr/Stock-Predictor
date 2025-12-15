@@ -92,36 +92,85 @@ class DataLoader:
             
         return avg_sentiment, results
 
-    def preprocess_data(self, sequence_length=60):
+    def preprocess_data(self, sequence_length=60, split_ratio=0.8):
         """
-        Preprocesses data for LSTM model.
-        Args:
-            sequence_length: Number of time steps to look back.
-        Returns:
-            X, y, scaler: Preprocessed features, targets, and the scaler object.
+        Preprocesses data using Log Returns for Stationarity.
         """
         if self.data is None:
             self.fetch_stock_data()
             
-        # Use 'Close' price for prediction
-        # Ensure we have data
-        if self.data.empty:
-            raise ValueError("No data fetched.")
+        if self.data.isnull().values.any():
+             self.data = self.data.dropna()
 
-        dataset = self.data['Close'].values.reshape(-1, 1)
-        scaled_data = self.scaler.fit_transform(dataset)
-
-        X, y = [], []
-        for i in range(sequence_length, len(scaled_data)):
-            X.append(scaled_data[i-sequence_length:i, 0])
-            y.append(scaled_data[i, 0])
-
-        X, y = np.array(X), np.array(y)
+        # --- Feature Engineering ---
+        df = self.data.copy()
         
-        # Reshape X for LSTM [samples, time steps, features]
-        X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+        # 1. Log Returns (Target & Feature)
+        # Log(P_t / P_{t-1})
+        df['Log_Ret'] = np.log(df['Close'] / df['Close'].shift(1))
         
-        return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32), self.scaler
+        # 2. Volume Change (Log)
+        # Add small epsilon to avoid log(0)
+        df['Vol_Change'] = np.log((df['Volume'] + 1) / (df['Volume'].shift(1) + 1))
+
+        # 3. RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # 4. MACD
+        exp12 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp12 - exp26
+        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        # Drop NaNs created by shift/rolling
+        df = df.dropna()
+        
+        # Select Features
+        # Note: We use Log_Ret instead of Price
+        features = ['Log_Ret', 'Vol_Change', 'RSI', 'MACD', 'Signal_Line']
+        
+        dataset = df[features].values
+        target = df['Log_Ret'].values.reshape(-1, 1) 
+        
+        # --- Split THEN Scale ---
+        train_size = int(len(dataset) * split_ratio)
+        train_data = dataset[:train_size]
+        test_data = dataset[train_size:]
+        
+        # Fit scaler ONLY on training data
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        self.target_scaler = MinMaxScaler(feature_range=(0, 1)) 
+        
+        # Fit
+        self.scaler.fit(train_data)
+        self.target_scaler.fit(train_data[:, 0].reshape(-1, 1)) # Log_Ret is index 0
+        
+        # Transform
+        scaled_train = self.scaler.transform(train_data)
+        scaled_test = self.scaler.transform(test_data)
+        
+        # Create Sequences
+        def create_sequences(data, seq_len):
+            X, y = [], []
+            for i in range(seq_len, len(data)):
+                X.append(data[i-seq_len:i])
+                y.append(data[i, 0]) # Predicting 'Log_Ret'
+            return np.array(X), np.array(y)
+            
+        X_train, y_train = create_sequences(scaled_train, sequence_length)
+        X_test, y_test = create_sequences(scaled_test, sequence_length)
+        
+        # Convert to Tensors
+        X_train = torch.tensor(X_train, dtype=torch.float32)
+        y_train = torch.tensor(y_train, dtype=torch.float32)
+        X_test = torch.tensor(X_test, dtype=torch.float32)
+        y_test = torch.tensor(y_test, dtype=torch.float32)
+        
+        return X_train, y_train, X_test, y_test, self.target_scaler, len(features)
 
     def get_raw_data(self):
         return self.data

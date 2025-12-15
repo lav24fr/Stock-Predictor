@@ -5,7 +5,7 @@ from src.model import StockPredictorLSTM
 import numpy as np
 
 def train_model(X_train, y_train, input_size=1, hidden_size=50, num_layers=2, num_epochs=50, learning_rate=0.001, device='cpu', seed=42):
-    # Set seeds for reproducibility
+    # Set seeds
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():

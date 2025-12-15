@@ -5,13 +5,15 @@ class TradingStrategy:
     def __init__(self, initial_capital=10000):
         self.initial_capital = initial_capital
 
-    def simple_strategy(self, actual_prices, predicted_prices):
+    def simple_strategy(self, actual_prices, predicted_prices, stop_loss_pct=0.0):
         """
-        Simple strategy: If predicted price > current price (with threshold), Buy.
-        Otherwise Sell/Hold.
+        Simple strategy: If predicted price > current price (with threshold), Buy/Go Long.
+        If predicted price < current price, Sell/Go Short.
+        Includes Stop Loss.
         """
         capital = self.initial_capital
-        position = 0 # Number of shares
+        position = 0 # Number of shares (+ for Long, - for Short)
+        entry_price = 0
         portfolio_value = [capital]
         
         signals = [] # 1: Buy, -1: Sell, 0: Hold
@@ -19,46 +21,95 @@ class TradingStrategy:
         # Determine signals
         for i in range(len(actual_prices) - 1):
             curr_price = actual_prices[i]
-            pred_next_price = predicted_prices[i] # Corresponds to prediction for i+1 (depending on alignment)
+            pred_next_price = predicted_prices[i] 
             
-            # Simple logic: If we predict price goes up, buy
-            if pred_next_price > curr_price * 1.005: # Threshold 0.5% gain
+            # Stop Loss Check
+            triggered_sl = False
+            if position != 0 and stop_loss_pct > 0:
+                # Long Position SL: Price drops below entry
+                if position > 0 and curr_price < entry_price * (1 - stop_loss_pct):
+                    capital += position * curr_price
+                    position = 0
+                    triggered_sl = True
+                    signals.append(-1)
+                # Short Position SL: Price rises above entry
+                elif position < 0 and curr_price > entry_price * (1 + stop_loss_pct):
+                    capital += position * curr_price # position is negative, so this subtracts cost to cover
+                    position = 0
+                    triggered_sl = True
+                    signals.append(1) # Buy to cover
+            
+            if triggered_sl:
+                portfolio_value.append(capital)
+                continue
+
+            # Trading Logic
+            # Percentage diff
+            diff = (pred_next_price - curr_price) / curr_price
+            
+            # Bullish Signal
+            if diff > 0.005: 
+                # If Short, Cover First
+                if position < 0:
+                    capital += position * curr_price
+                    position = 0
+                
+                # Go Long if Neutral
                 if position == 0:
                     position = capital / curr_price
+                    entry_price = curr_price
                     capital = 0
                     signals.append(1)
-                else:
+                else: 
+                    # Already Long
                     signals.append(0)
-            elif pred_next_price < curr_price * 0.995: # Threshold 0.5% loss
+                    
+            # Bearish Signal
+            elif diff < -0.005: 
+                # If Long, Sell First
                 if position > 0:
-                    capital = position * curr_price
+                    capital += position * curr_price
                     position = 0
+                
+                # Go Short if Neutral
+                if position == 0:
+                    # Shorting: We get cash? No, usually margin. 
+                    # Simplified: We treat 'capital' as collateral.
+                    # We sell X shares. We assume we can leverage 1x.
+                    # Position = - (Capital / Price)
+                    max_shares = capital / curr_price
+                    position = -max_shares
+                    entry_price = curr_price
+                    # Capital stays as collateral (conceptually)
+                    # For simple arithmetic: Portfolio = Capital + (Position * Price)
+                    # When we enter short: Value = C + (-C/P * P) = 0? No.
+                    # Standard Sim: Cash increases by short sale proceeds.
+                    capital += abs(position) * curr_price 
                     signals.append(-1)
                 else:
+                    # Already Short
                     signals.append(0)
             else:
                 signals.append(0)
             
             # Update portfolio value
+            # Equity = Cash + Market Value of Positions
             current_val = capital + (position * curr_price)
             portfolio_value.append(current_val)
             
         return signals, portfolio_value
 
-    def ma_crossover_strategy(self, actual_prices, predicted_prices, short_window=5, long_window=20):
+    def ma_crossover_strategy(self, actual_prices, predicted_prices, short_window=5, long_window=20, stop_loss_pct=0.0):
         """
         Moving Average Crossover Strategy using Predicted Prices.
-        Buy when Short MA crosses above Long MA.
-        Sell when Short MA crosses below Long MA.
+        Buy when Short MA crosses above Long MA (Go Long).
+        Sell when Short MA crosses below Long MA (Go Short).
         """
         capital = self.initial_capital
         position = 0
+        entry_price = 0
         portfolio_value = [capital]
-        signals = [] # 1: Buy, -1: Sell, 0: Hold
-        
-        # We need a history for MA, so we combine actual history (if available) or just run on the predicted window
-        # For simplicity in this prototype, we'll calculate MAs on the 'predicted_prices' series directly
-        # effectively assuming the prediction curve is the reality we are trading on.
+        signals = [] 
         
         # Convert to Series for easy MA calculation
         pred_series = pd.Series(predicted_prices.flatten())
@@ -69,26 +120,56 @@ class TradingStrategy:
         for i in range(len(predicted_prices)):
             price = actual_prices[i] if i < len(actual_prices) else predicted_prices[i]
             
-            # Skip until we have enough data for MA
             if i < long_window:
                 signals.append(0)
                 portfolio_value.append(capital + (position * price))
                 continue
-                
-            # Check Crossover
-            # If Short > Long AND Short[prev] <= Long[prev] -> BUY
+            
+            # Stop Loss Check
+            triggered_sl = False
+            if position != 0 and stop_loss_pct > 0:
+                if position > 0 and price < entry_price * (1 - stop_loss_pct):
+                    capital += position * price
+                    position = 0
+                    triggered_sl = True
+                    signals.append(-1)
+                elif position < 0 and price > entry_price * (1 + stop_loss_pct):
+                    capital += position * price
+                    position = 0
+                    triggered_sl = True
+                    signals.append(1)
+            
+            if triggered_sl:
+                portfolio_value.append(capital)
+                continue
+
+            # Crossover Check
+            # Bullish Cross (Short > Long)
             if short_ma[i] > long_ma[i] and short_ma[i-1] <= long_ma[i-1]:
+                # Cover Short
+                if position < 0:
+                    capital += position * price
+                    position = 0
+                # Go Long
                 if position == 0:
                     position = capital / price
+                    entry_price = price
                     capital = 0
                     signals.append(1)
                 else:
                     signals.append(0)
-            # If Short < Long AND Short[prev] >= Long[prev] -> SELL
+            # Bearish Cross (Short < Long)
             elif short_ma[i] < long_ma[i] and short_ma[i-1] >= long_ma[i-1]:
+                # Sell Long
                 if position > 0:
-                    capital = position * price
+                    capital += position * price
                     position = 0
+                # Go Short
+                if position == 0:
+                    max_shares = capital / price
+                    position = -max_shares
+                    entry_price = price
+                    capital += abs(position) * price
                     signals.append(-1)
                 else:
                     signals.append(0)
