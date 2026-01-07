@@ -4,14 +4,26 @@ import torch.optim as optim
 from src.model import StockPredictorLSTM
 import numpy as np
 
-def train_model(X_train, y_train, input_size=1, hidden_size=50, num_layers=2, num_epochs=50, learning_rate=0.001, device='cpu', seed=42):
+
+def train_model(
+    X_train,
+    y_train,
+    input_size=1,
+    hidden_size=50,
+    num_layers=2,
+    num_epochs=50,
+    learning_rate=0.001,
+    dropout=0.2,
+    device="cpu",
+    seed=42,
+):
     # Set seeds
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-    model = StockPredictorLSTM(input_size, hidden_size, num_layers).to(device)
+    model = StockPredictorLSTM(input_size, hidden_size, num_layers, dropout=dropout).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -23,12 +35,13 @@ def train_model(X_train, y_train, input_size=1, hidden_size=50, num_layers=2, nu
         loss.backward()
         optimizer.step()
 
-        if (epoch+1) % 10 == 0:
-            print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
-    
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
+
     return model
 
-def predict(model, X_test, scaler, device='cpu'):
+
+def predict(model, X_test, scaler, device="cpu"):
     model.eval()
     with torch.no_grad():
         predictions = model(X_test.to(device))
