@@ -21,7 +21,10 @@ class TradingStrategy:
         # Determine signals
         for i in range(len(actual_prices) - 1):
             curr_price = actual_prices[i]
-            pred_next_price = predicted_prices[i]
+            # Use prediction for NEXT day (i+1) vs Current Price (i)
+            # predicted_prices contains predictions aligned such that index j is prediction for time j
+            # We want pred_next_price to be prediction for time i+1
+            pred_next_price = predicted_prices[i+1]
 
             # Stop Loss Check
             triggered_sl = False
