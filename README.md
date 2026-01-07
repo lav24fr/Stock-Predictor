@@ -63,7 +63,3 @@ The application allows you to tweak the AI model. Our research shows:
   * `strategy.py`: Implementation of trading algorithms.
   * `data_loader.py`: Data fetching (yfinance) and preprocessing.
 * `tests/`: Unit tests for critical logic.
-
-## ⚠️ Disclaimer
-
-This application is for **educational and research purposes only**. It is not financial advice. Algorithmic trading involves significant risk of loss.
