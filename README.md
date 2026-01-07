@@ -3,8 +3,6 @@
 
 A powerful, interactive Streamlit application that uses Deep Learning (LSTM) to forecast stock prices and simulate algorithmic trading strategies.
 
-![App Screenshot](https://via.placeholder.com/800x400?text=Stock+Predictor+Dashboard)
-
 ## 🚀 Key Features
 
 * **Deep Learning Forecast**: Uses a PyTorch-based Long Short-Term Memory (LSTM) network to predict future price movements based on historical data.
