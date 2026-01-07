@@ -27,8 +27,12 @@ dropout = st.sidebar.slider("Dropout", 0.0, 0.5, 0.2, step=0.05)
 
 # Strategy Config
 st.sidebar.subheader("Strategy Config")
-selected_strategy = st.sidebar.selectbox("Trading Strategy", ["Simple Threshold", "MA Crossover", "Darvas Box"])
-stop_loss = st.sidebar.slider("Stop Loss (%)", 0.0, 10.0, 2.0, step=0.5) / 100
+selected_strategy = st.sidebar.selectbox(
+    "Trading Strategy", ["MA Crossover", "Simple Threshold", "Darvas Box", "Robust Strategy"]
+)
+stop_loss = 0.01  # Default 1% for Robust Strategy or if slider is not shown
+if selected_strategy != "Robust Strategy": # Robust has built-in ATR based SL
+    stop_loss = st.sidebar.slider("Stop Loss (%)", 0.0, 10.0, 2.0, step=0.5) / 100
 
 
 @st.cache_data
@@ -72,6 +76,11 @@ if st.sidebar.button("Run Prediction"):
             train_preds_scaled = predict(
                 model, X_train, scaler
             )  # Actually this uses target_scaler implicitly? No, predict uses passed scaler.
+            
+            if len(X_test) == 0:
+                st.error("Not enough data to generate test predictions. Reduce lookback or choose a longer date range.")
+                st.stop()
+                
             test_preds_scaled = predict(model, X_test, scaler)
 
             # 4. Reconstruct Prices
@@ -140,8 +149,9 @@ if st.sidebar.button("Run Prediction"):
             # Calculate train_size based on knowns
             # train_len = train_size - lookback
             train_size = train_len + lookback
-
-            test_start_idx_pp = train_size + lookback
+            
+            # With improved data_loader, X_test starts exactly at train_size (context prepended)
+            test_start_idx_pp = train_size
             test_start_idx_raw = test_start_idx_pp + offset
 
             test_prev_close = close_prices[test_start_idx_raw - 1 : test_start_idx_raw + test_len - 1]
@@ -181,7 +191,7 @@ if st.sidebar.button("Run Prediction"):
                     )
                 )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # 6. Live Market Sentiment
             sentiment_score, sentiment_details = get_news_sentiment(ticker)
@@ -218,6 +228,10 @@ if st.sidebar.button("Run Prediction"):
                 signals, portfolio_value = strategy.darvas_box_strategy(
                     actual_test_prices, test_preds_price, stop_loss_pct=stop_loss
                 )
+            elif selected_strategy == "Robust Strategy":
+                signals, portfolio_value = strategy.robust_strategy(
+                    original_data, test_idx, test_preds_price, risk_per_trade=0.02
+                )
             else:
                 signals, portfolio_value = strategy.ma_crossover_strategy(
                     actual_test_prices, test_preds_price, stop_loss_pct=stop_loss
@@ -227,13 +241,13 @@ if st.sidebar.button("Run Prediction"):
             final_val = portfolio_value[-1]
             profit = final_val - 10000
 
-            st.metric(label="Final Portfolio Value", value=f"${final_val:,.2f}", delta=f"${profit:,.2f}")
+            st.metric(label="Final Portfolio Value", value=f"${final_val:,.2f}", delta=f"{profit:,.2f}")
 
             strat_fig = go.Figure()
             strat_fig.add_trace(
                 go.Scatter(x=original_data.index[test_idx], y=portfolio_value[1:], mode="lines", name="Portfolio Value")
             )
-            st.plotly_chart(strat_fig, use_container_width=True)
+            st.plotly_chart(strat_fig, width="stretch")
 
         except Exception as e:
             st.error(f"Error: {e}")

@@ -163,7 +163,16 @@ class DataLoader:
             return np.array(X), np.array(y)
 
         X_train, y_train = create_sequences(scaled_train, sequence_length)
-        X_test, y_test = create_sequences(scaled_test, sequence_length)
+
+        # Prepend last 'sequence_length' of train data to test data to allow prediction of the first test point
+        if len(scaled_train) >= sequence_length:
+            test_context = scaled_train[-sequence_length:]
+            scaled_test_extended = np.concatenate((test_context, scaled_test), axis=0)
+        else:
+            # Fallback if train is too small (unlikely but safe)
+            scaled_test_extended = scaled_test
+
+        X_test, y_test = create_sequences(scaled_test_extended, sequence_length)
 
         # Convert to Tensors
         X_train = torch.tensor(X_train, dtype=torch.float32)
