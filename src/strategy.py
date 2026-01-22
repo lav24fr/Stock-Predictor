@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 
 class TradingStrategy:
@@ -266,6 +267,15 @@ class TradingStrategy:
         return atr
 
     def robust_strategy(self, data, test_indices, predicted_prices, risk_per_trade=0.02):
+        """
+        Robust strategy with ATR-based position sizing and dynamic stops.
+        
+        Fixed to avoid look-ahead bias:
+        - Signals are generated at end of day t based on prediction for t+1
+        - Entry execution happens at open of day t+1
+        - Stop-loss/take-profit are checked using current bar's High/Low
+          (simulating intraday limit/stop orders placed the previous day)
+        """
         capital = self.initial_capital
         position = 0
         entry_price = 0
@@ -273,6 +283,9 @@ class TradingStrategy:
         take_profit_price = 0
         portfolio_value = [capital]
         signals = []
+        
+        pending_entry = False
+        pending_entry_atr = 0
 
         data = data.copy()
         data['SMA_50'] = data['Close'].rolling(window=50).mean()
@@ -284,87 +297,90 @@ class TradingStrategy:
             predicted_prices = predicted_prices[:min_len]
 
         for i, idx in enumerate(test_indices):
-            if i == 0:
-                signals.append(0)
-                portfolio_value.append(capital)
-                continue
-                
-            current_idx = test_indices[i-1]
-            current_row = data.iloc[current_idx]
-            current_price = current_row['Close']
+            current_row = data.iloc[idx]
             
-            pred_next_price = predicted_prices[i]
+            def get_scalar(val):
+                """Convert potential Series to scalar."""
+                if hasattr(val, 'item'):
+                    return val.item()
+                elif hasattr(val, 'iloc'):
+                    return float(val.iloc[0]) if len(val) > 0 else float('nan')
+                return float(val)
             
-            atr = current_row['ATR']
-            sma_50 = current_row['SMA_50']
+            current_open = get_scalar(current_row['Open'])
+            current_high = get_scalar(current_row['High'])
+            current_low = get_scalar(current_row['Low'])
+            current_close = get_scalar(current_row['Close'])
             
-            if pd.isna(atr) or pd.isna(sma_50):
-                signals.append(0)
-                portfolio_value.append(capital + position * current_price)
-                continue
-
+            atr = get_scalar(current_row['ATR'])
+            sma_50 = get_scalar(current_row['SMA_50'])
+            
             signal = 0
             
-            if position != 0:
-                next_day_row = data.iloc[test_indices[i]]
-                next_close = next_day_row['Close']
-                next_low = next_day_row['Low']
-                next_high = next_day_row['High']
+            if pending_entry and position == 0:
+                entry_price = current_open
+                risk_amount = capital * risk_per_trade
+                dist_sl = 2 * pending_entry_atr
                 
-                triggered_exit = False
-                
-                if position > 0:
-                    if next_low < stop_loss_price:
-                        exit_price = stop_loss_price
-                        if next_day_row['Open'] < stop_loss_price:
-                             exit_price = next_day_row['Open']
+                if dist_sl > 0:
+                    shares_to_buy = risk_amount / dist_sl
+                    max_shares = capital / entry_price
+                    shares = min(shares_to_buy, max_shares)
+                    
+                    if shares > 0:
+                        position = shares
+                        capital -= shares * entry_price
                         
-                        capital += position * exit_price
-                        position = 0
-                        triggered_exit = True
-                        signal = -1
-                    elif next_high > take_profit_price:
+                        stop_loss_price = entry_price - (2 * pending_entry_atr)
+                        take_profit_price = entry_price + (3 * pending_entry_atr)
+                        
+                        signal = 1
+                
+                pending_entry = False
+                pending_entry_atr = 0
+            
+            if position > 0:
+                triggered_exit = False
+                exit_price = 0
+                
+                if current_low <= stop_loss_price:
+                    if current_open <= stop_loss_price:
+                        exit_price = current_open
+                    else:
+                        exit_price = stop_loss_price
+                    triggered_exit = True
+                    
+                elif current_high >= take_profit_price:
+                    if current_open >= take_profit_price:
+                        exit_price = current_open
+                    else:
                         exit_price = take_profit_price
-                        if next_day_row['Open'] > take_profit_price:
-                            exit_price = next_day_row['Open']
-                            
-                        capital += position * exit_price
-                        position = 0
-                        triggered_exit = True
-                        signal = -1
+                    triggered_exit = True
                 
                 if triggered_exit:
-                    portfolio_value.append(capital)
-                    signals.append(signal)
-                    continue
+                    capital += position * exit_price
+                    position = 0
+                    signal = -1
+                    stop_loss_price = 0
+                    take_profit_price = 0
             
-            if position == 0:
-                trend_is_up = current_price > sma_50
-                expected_move = pred_next_price - current_price
-                is_meaningful_move = expected_move > (0.1 * atr)
-                
-                if trend_is_up and is_meaningful_move:
-                    risk_amount = capital * risk_per_trade
-                    dist_sl = 2 * atr
+            if position == 0 and not pending_entry:
+                if not (np.isnan(atr) or np.isnan(sma_50)):
+                    trend_is_up = bool(current_close > sma_50)
                     
-                    if dist_sl > 0:
-                        shares_to_buy = risk_amount / dist_sl
-                        max_shares = capital / current_price
-                        shares = min(shares_to_buy, max_shares)
+                    if i + 1 < len(predicted_prices):
+                        pred_val = np.array(predicted_prices[i + 1]).flatten()
+                        pred_next_price = float(pred_val[0]) if len(pred_val) > 0 else current_close
+                        expected_move = pred_next_price - current_close
+                        is_meaningful_move = bool(expected_move > (0.1 * atr))
                         
-                        if shares > 0:
-                            position = shares
-                            entry_price = current_price
-                            capital -= shares * current_price
-                            
-                            stop_loss_price = entry_price - (2 * atr)
-                            take_profit_price = entry_price + (3 * atr)
-                            
-                            signal = 1
+                        if trend_is_up and is_meaningful_move:
+                            pending_entry = True
+                            pending_entry_atr = atr
             
-            price_t = data.iloc[test_indices[i]]['Close']
-            val = capital + (position * price_t)
+            val = capital + (position * current_close)
             portfolio_value.append(val)
             signals.append(signal)
 
         return signals, portfolio_value
+

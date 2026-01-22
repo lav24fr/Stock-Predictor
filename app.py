@@ -21,6 +21,7 @@ hidden_size = st.sidebar.slider("Hidden Units", 16, 128, 50)
 num_layers = st.sidebar.slider("LSTM Layers", 1, 3, 2)
 lookback = st.sidebar.slider("Lookback (Days)", 30, 90, 60)
 dropout = st.sidebar.slider("Dropout", 0.0, 0.5, 0.2, step=0.05)
+include_sentiment = st.sidebar.checkbox("Include Sentiment", value=False, help="Add live news sentiment as a model feature")
 
 st.sidebar.subheader("Strategy Config")
 selected_strategy = st.sidebar.selectbox(
@@ -32,11 +33,12 @@ if selected_strategy != "Robust Strategy":
 
 
 @st.cache_data
-def get_stock_data(ticker, start, end, sequence_length):
+def get_stock_data(ticker, start, end, sequence_length, include_sentiment=False):
     loader = DataLoader(ticker, start, end)
     loader.fetch_stock_data()
     X_train, y_train, X_test, y_test, scaler, input_size, offset = loader.preprocess_data(
-        sequence_length=sequence_length
+        sequence_length=sequence_length,
+        include_sentiment=include_sentiment
     )
     return loader, X_train, y_train, X_test, y_test, scaler, input_size, offset
 
@@ -51,7 +53,7 @@ if st.sidebar.button("Run Prediction"):
     with st.spinner("Fetching Data and Training Model..."):
         try:
             loader, X_train, y_train, X_test, y_test, scaler, input_size, offset = get_stock_data(
-                ticker, start_date, end_date, lookback
+                ticker, start_date, end_date, lookback, include_sentiment
             )
 
             model = train_model(
