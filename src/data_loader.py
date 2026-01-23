@@ -62,35 +62,47 @@ class DataLoader:
         Args:
             df: DataFrame to compute indicators on
             warmup_df: Optional DataFrame to use as warm-up data (for test set).
-                       This ensures rolling/ewm computations don't use future info.
+                       This ensures rolling/ewm computations use proper history.
         
         Returns:
-            DataFrame with indicators added (warmup rows removed if provided)
+            DataFrame with indicators added
         """
-        if warmup_df is not None:
-            warmup_len = len(warmup_df)
-            combined = pd.concat([warmup_df, df], axis=0)
-        else:
-            warmup_len = 0
-            combined = df.copy()
+        # Create a copy of df to avoid modifying original
+        result_df = df.copy()
         
-        delta = combined["Close"].diff()
+        if warmup_df is not None:
+            # Use only the Close column from warmup for indicator calculations
+            warmup_close = warmup_df["Close"].copy()
+            combined_close = pd.concat([warmup_close, df["Close"]], axis=0)
+            warmup_len = len(warmup_close)
+        else:
+            combined_close = df["Close"].copy()
+            warmup_len = 0
+        
+        # RSI calculation
+        delta = combined_close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
-        combined["RSI"] = 100 - (100 / (1 + rs))
-
-        exp12 = combined["Close"].ewm(span=12, adjust=False).mean()
-        exp26 = combined["Close"].ewm(span=26, adjust=False).mean()
-        combined["MACD"] = exp12 - exp26
-        combined["Signal_Line"] = combined["MACD"].ewm(span=9, adjust=False).mean()
+        rsi = 100 - (100 / (1 + rs))
         
+        # MACD calculation
+        exp12 = combined_close.ewm(span=12, adjust=False).mean()
+        exp26 = combined_close.ewm(span=26, adjust=False).mean()
+        macd = exp12 - exp26
+        signal_line = macd.ewm(span=9, adjust=False).mean()
+        
+        # Extract only the portion corresponding to df (remove warmup)
         if warmup_len > 0:
-            result = combined.iloc[warmup_len:].copy()
+            result_df["RSI"] = rsi.iloc[warmup_len:].values
+            result_df["MACD"] = macd.iloc[warmup_len:].values
+            result_df["Signal_Line"] = signal_line.iloc[warmup_len:].values
         else:
-            result = combined
+            result_df["RSI"] = rsi.values
+            result_df["MACD"] = macd.values
+            result_df["Signal_Line"] = signal_line.values
             
-        return result
+        return result_df
 
     def preprocess_data(self, sequence_length=60, split_ratio=0.8, include_sentiment=False):
         """
@@ -122,6 +134,18 @@ class DataLoader:
         offset = len(self.data) - len(df)
         
         train_size = int(len(df) * split_ratio)
+        
+        MIN_SAMPLES_PER_PARAM = 10
+        estimated_params = 50 * 50 * 4
+        min_recommended = estimated_params * MIN_SAMPLES_PER_PARAM // 100
+        
+        if train_size < min_recommended:
+            import warnings
+            warnings.warn(
+                f"Training set has only {train_size} samples. Consider using at least {min_recommended}.",
+                UserWarning
+            )
+        
         train_df = df.iloc[:train_size].copy()
         test_df = df.iloc[train_size:].copy()
 
@@ -282,13 +306,16 @@ class DataLoader:
             yield X_train, y_train, X_test, y_test, fold_target_scaler, fold_info
 
 
-def calculate_metrics(y_true, y_pred, risk_free_rate=0.02):
+def calculate_metrics(y_true, y_pred, strategy_returns=None, risk_free_rate=0.02):
     """
     Calculate evaluation metrics for stock prediction.
     
     Args:
         y_true: Actual log returns
         y_pred: Predicted log returns  
+        strategy_returns: Optional array of actual trading returns from following predictions.
+                         If provided, Sharpe is calculated on these. Otherwise, uses
+                         returns from a simple direction-following strategy.
         risk_free_rate: Annual risk-free rate (default 2%)
         
     Returns:
@@ -314,10 +341,19 @@ def calculate_metrics(y_true, y_pred, risk_free_rate=0.02):
     direction_pred = np.sign(y_pred)
     dir_accuracy = np.mean(direction_true == direction_pred)
     
-    if len(y_pred) > 1 and np.std(y_pred) > 0:
+    # Sharpe Ratio: Calculate on ACTUAL returns achieved by following predictions
+    # If strategy_returns not provided, simulate a simple direction-following strategy
+    if strategy_returns is not None:
+        returns_for_sharpe = np.array(strategy_returns).flatten()
+    else:
+        # Simple strategy: go long if predict up, short if predict down
+        # Actual return = sign(prediction) * actual_return
+        returns_for_sharpe = np.sign(y_pred) * y_true
+    
+    if len(returns_for_sharpe) > 1 and np.std(returns_for_sharpe) > 0:
         daily_rf = risk_free_rate / 252
-        excess_returns = y_pred - daily_rf
-        sharpe = np.sqrt(252) * np.mean(excess_returns) / np.std(y_pred)
+        excess_returns = returns_for_sharpe - daily_rf
+        sharpe = np.sqrt(252) * np.mean(excess_returns) / np.std(returns_for_sharpe)
     else:
         sharpe = 0.0
     

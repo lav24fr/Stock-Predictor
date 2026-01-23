@@ -27,22 +27,12 @@ def test_pipeline():
     print(f"   Predictions shape: {preds.shape}")
 
     print("4. Testing Strategy...")
-    # Mock aligned data
-    # We need to inverse transform to make it realistic for strategy which checks percentage change
+    # Mock aligned data - inverse transform to get realistic values for strategy
     actual_inv = scaler.inverse_transform(y.numpy().reshape(-1, 1)).flatten()
 
     strategy = TradingStrategy()
     signals, portfolio = strategy.simple_strategy(actual_inv, preds.flatten())
-    print(f"   Strategy run. Final Portfolio Value: {portfolio[-1]}")
-
-    print("4. Testing Strategy...")
-    # Mock aligned data
-    # We need to inverse transform to make it realistic for strategy which checks percentage change
-    actual_inv = scaler.inverse_transform(y.numpy().reshape(-1, 1)).flatten()
-
-    strategy = TradingStrategy()
-    signals, portfolio = strategy.simple_strategy(actual_inv, preds.flatten())
-    print(f"   Strategy run. Final Portfolio Value: {portfolio[-1]}")
+    print(f"   Strategy run. Final Portfolio Value: {portfolio[-1]:.2f}")
 
     print("5. Testing Sentiment...")
     avg_sentiment, details = loader.fetch_news_sentiment()
@@ -54,3 +44,4 @@ def test_pipeline():
 
 if __name__ == "__main__":
     test_pipeline()
+

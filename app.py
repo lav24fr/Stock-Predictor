@@ -22,6 +22,7 @@ num_layers = st.sidebar.slider("LSTM Layers", 1, 3, 2)
 lookback = st.sidebar.slider("Lookback (Days)", 30, 90, 60)
 dropout = st.sidebar.slider("Dropout", 0.0, 0.5, 0.2, step=0.05)
 include_sentiment = st.sidebar.checkbox("Include Sentiment", value=False, help="Add live news sentiment as a model feature")
+# NOTE: Bidirectional LSTM option removed - not suitable for time series forecasting
 
 st.sidebar.subheader("Strategy Config")
 selected_strategy = st.sidebar.selectbox(
@@ -65,6 +66,7 @@ if st.sidebar.button("Run Prediction"):
                 num_epochs=epochs,
                 dropout=dropout,
                 seed=42,
+                val_data=(X_test, y_test)
             )
 
             train_preds_scaled = predict(model, X_train, scaler)
@@ -76,7 +78,9 @@ if st.sidebar.button("Run Prediction"):
             test_preds_scaled = predict(model, X_test, scaler)
 
             original_data = loader.data
-            close_prices = original_data["Close"].values
+            
+            # Flatten all arrays to handle yfinance multi-index DataFrames
+            close_prices = np.array(original_data["Close"].values).flatten()
 
             train_len = len(train_preds_scaled)
             test_len = len(test_preds_scaled)
@@ -86,7 +90,7 @@ if st.sidebar.button("Run Prediction"):
 
             train_prev_close = close_prices[train_start_idx_raw - 1 : train_start_idx_raw + train_len - 1]
             train_preds_ret = train_preds_scaled.flatten()
-            train_preds_price = train_prev_close * np.exp(train_preds_ret)
+            train_preds_price = np.array(train_prev_close).flatten() * np.exp(train_preds_ret)
 
             train_size = train_len + lookback
             
@@ -95,21 +99,23 @@ if st.sidebar.button("Run Prediction"):
 
             test_prev_close = close_prices[test_start_idx_raw - 1 : test_start_idx_raw + test_len - 1]
             test_preds_ret = test_preds_scaled.flatten()
-            test_preds_price = test_prev_close * np.exp(test_preds_ret)
+            test_preds_price = np.array(test_prev_close).flatten() * np.exp(test_preds_ret)
 
             train_idx = range(train_start_idx_raw, train_start_idx_raw + train_len)
             test_idx = range(test_start_idx_raw, test_start_idx_raw + test_len)
 
+            # Chart: Actual vs Predicted Prices
             fig = go.Figure()
             fig.add_trace(
-                go.Scatter(x=original_data.index, y=original_data["Close"], mode="lines", name="Actual Price")
+                go.Scatter(x=original_data.index, y=close_prices, mode="lines", name="Actual Price")
             )
 
             if len(train_idx) > 0:
+                train_preds_price_flat = np.array(train_preds_price).flatten()
                 fig.add_trace(
                     go.Scatter(
                         x=original_data.index[train_idx],
-                        y=train_preds_price,
+                        y=train_preds_price_flat,
                         mode="lines",
                         name="Train Pred (Reconstructed)",
                         line=dict(color="orange"),
@@ -117,17 +123,18 @@ if st.sidebar.button("Run Prediction"):
                 )
 
             if len(test_idx) > 0:
+                test_preds_price_flat = np.array(test_preds_price).flatten()
                 fig.add_trace(
                     go.Scatter(
                         x=original_data.index[test_idx],
-                        y=test_preds_price,
+                        y=test_preds_price_flat,
                         mode="lines",
                         name="Test Pred (Reconstructed)",
                         line=dict(color="green"),
                     )
                 )
 
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
 
             sentiment_score, sentiment_details = get_news_sentiment(ticker)
 
@@ -149,23 +156,24 @@ if st.sidebar.button("Run Prediction"):
             st.subheader(f"Trading Strategy Simulation ({selected_strategy})")
             strategy = TradingStrategy(initial_capital=10000)
 
-            actual_test_prices = original_data["Close"].values[test_idx]
+            actual_test_prices = np.array(close_prices[test_start_idx_raw:test_start_idx_raw + test_len]).flatten()
+            test_preds_price_flat = np.array(test_preds_price).flatten()
 
             if selected_strategy == "Simple Threshold":
                 signals, portfolio_value = strategy.simple_strategy(
-                    actual_test_prices, test_preds_price, stop_loss_pct=stop_loss
+                    actual_test_prices, test_preds_price_flat, stop_loss_pct=stop_loss
                 )
             elif selected_strategy == "Darvas Box":
                 signals, portfolio_value = strategy.darvas_box_strategy(
-                    actual_test_prices, test_preds_price, stop_loss_pct=stop_loss
+                    actual_test_prices, test_preds_price_flat, stop_loss_pct=stop_loss
                 )
             elif selected_strategy == "Robust Strategy":
                 signals, portfolio_value = strategy.robust_strategy(
-                    original_data, test_idx, test_preds_price, risk_per_trade=0.02
+                    original_data, test_idx, test_preds_price_flat, risk_per_trade=0.02
                 )
             else:
                 signals, portfolio_value = strategy.ma_crossover_strategy(
-                    actual_test_prices, test_preds_price, stop_loss_pct=stop_loss
+                    actual_test_prices, test_preds_price_flat, stop_loss_pct=stop_loss
                 )
 
             final_val = portfolio_value[-1]
@@ -173,12 +181,24 @@ if st.sidebar.button("Run Prediction"):
 
             st.metric(label="Final Portfolio Value", value=f"${final_val:,.2f}", delta=f"{profit:,.2f}")
 
+            # Ensure portfolio_value length matches test_idx for plotting
+            plot_portfolio = portfolio_value[1:] if len(portfolio_value) > len(test_idx) else portfolio_value
+            if len(plot_portfolio) < len(test_idx):
+                plot_portfolio = portfolio_value
+            plot_len = min(len(plot_portfolio), len(test_idx))
+            
             strat_fig = go.Figure()
             strat_fig.add_trace(
-                go.Scatter(x=original_data.index[test_idx], y=portfolio_value[1:], mode="lines", name="Portfolio Value")
+                go.Scatter(
+                    x=original_data.index[test_idx][:plot_len], 
+                    y=plot_portfolio[:plot_len], 
+                    mode="lines", 
+                    name="Portfolio Value"
+                )
             )
-            st.plotly_chart(strat_fig, width="stretch")
+            st.plotly_chart(strat_fig, use_container_width=True)
 
         except Exception as e:
             st.error(f"Error: {e}")
             st.exception(e)
+

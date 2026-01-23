@@ -1,63 +1,67 @@
+# Stock Price Predictor & Strategy Simulator 📈
 
-# 📈 AI Stock Predictor & Strategy Simulator
+An advanced LSTM-based stock price prediction application that simulates various trading strategies. Built with **PyTorch**, **Streamlit**, and **yfinance**.
 
-A powerful, interactive Streamlit application that uses Deep Learning (LSTM) to forecast stock prices and simulate algorithmic trading strategies.
+![App Screenshot](https://via.placeholder.com/800x400?text=Stock+Predictor+Dashboard)
 
-## 🚀 Key Features
+## Features
 
-* **Deep Learning Forecast**: Uses a PyTorch-based Long Short-Term Memory (LSTM) network to predict future price movements based on historical data.
-* **Live Sentiment Analysis**: Integrates news sentiment from VADER analysis to adjust predictions in real-time.
-* **Strategy Simulation**: Backtest three distinct trading strategies on the predicted data.
-  * **MA Crossover**: Trend-following using forecasted Moving Averages.
-  * **Darvas Box**: Breakout detection for strong trends.
-  * **Simple Threshold**: High-risk, high-reward signal based on raw momentum.
-  * **Robust Strategy**: ML-Enhanced strategy with ATR Volatility sizing and SMA Trend filtering.
-* **Interactive Dashboard**: Fully customizable simulation parameters (Lookback, Stop Loss, Model Complexity) via Streamlit.
+- **Deep Learning Model**: Two-layer LSTM with Dropout and L2 Regularization, trained on Log Returns.
+- **Sentiment Analysis**: Integration with VADER Sentiment to analyze live news headlines.
+- **Trading Strategies**:
+  - **MA Crossover**: Classic Golden/Death Cross strategy.
+  - **Darvas Box**: Automatic box theory implementation.
+  - **Robust Strategy**: Trend-following with ATR-based entry/exit and predicted price targets.
+  - **Simple Threshold**: Momentum-based entry on strong prediction signals.
+- **Technical Indicators**: RSI, MACD, Bollinger Bands, ATR.
+- **Interactive Dashboard**: Real-time backtesting and PnL visualization.
 
-## 🛠️ Installation
+## Installation
 
-1. **Clone the Repository**
+1. **Clone the repository**
 
-    ```bash
-    git clone https://github.com/lav24fr/Stock-Predictor.git
-    cd Stock-Predictor
-    ```
+   ```bash
+   git clone https://github.com/yourusername/stock-predictor.git
+   cd stock-predictor
+   ```
 
-2. **Install Dependencies**
+2. **Create a virtual environment**
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
 
-3. **Run the App**
+3. **Install dependencies**
 
-    ```bash
-    streamlit run app.py
-    ```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-## 📘 Trading Strategies
+## Usage
 
-For a deep dive into the optimal parameters and logic for each strategy, please read our **[Strategy Guide](STRATEGY_GUIDE.md)**.
+Run the Streamlit application:
 
-**Quick Summary:**
+```bash
+streamlit run app.py
+```
 
-* 🏆 **Best Overall**: **MA Crossover** (Short=5, Long=50, SL=1%). Reliable and trend-safe.
-* 📦 **Safest**: **Darvas Box**. Preserves capital in choppy markets.
-* ⚡ **High Risk**: **Simple Threshold**. Only use with a simple model (20 epochs) to avoid overfitting.
+Open your browser to `http://localhost:8501`.
 
-## 🧠 Model Configuration
+## Project Structure
 
-The application allows you to tweak the AI model. Our research shows:
+- `app.py`: Main Streamlit dashboard application.
+- `src/model.py`: PyTorch LSTM model definition.
+- `src/train.py`: Training loop with Early Stopping and LR Scheduling.
+- `src/data_loader.py`: Data fetching (yfinance) and preprocessing pipeline.
+- `src/strategy.py`: Implementation of trading logic.
 
-* **Simple Models (20 Epochs, 32 Hidden Units)** perform **better** for trading than complex ones.
-* Complex models tends to "memorize" noise, leading to whipsaws in trading signals.
+## Strategy Details
 
-## 📂 Project Structure
+- **Robust Strategy**: Confirms uptrend with 50-day SMA. Enters if predicted price move > 0.2% OR > 0.02 *ATR. Uses Trailing Stop Loss (2* ATR).
+- **MA Crossover**: Buys when Short MA crosses above Long MA.
+- **Simple Threshold**: Buys if next-day predicted return > 0.5%.
 
-* `app.py`: Main Streamlit dashboard and UI logic.
-* `src/`: Core logic modules.
-  * `model.py`: LSTM PyTorch architecture.
-  * `train.py`: Training loop and prediction logic.
-  * `strategy.py`: Implementation of trading algorithms.
-  * `data_loader.py`: Data fetching (yfinance) and preprocessing.
-* `tests/`: Unit tests for critical logic.
+## License
+
+MIT

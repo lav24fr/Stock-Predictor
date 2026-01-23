@@ -1,40 +1,17 @@
-# Python bytecode
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-
-# Virtual Environment
-venv/
+*.py[cod]
+*$py.class
 .venv/
+venv/
 env/
-ENV/
 
-# IDE
+# Mac
+.DS_Store
+
+# IDEs
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Streamlit
 .streamlit/
-
-# pytest cache
-.pytest_cache/
-
-# Model checkpoints (if you add model saving)
-*.pth
-*.pt
-models/
-checkpoints/

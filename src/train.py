@@ -7,9 +7,10 @@ from src.model import StockPredictorLSTM
 
 
 def train_model(X_train, y_train, input_size, hidden_size=50, num_layers=2, 
-                num_epochs=50, dropout=0.2, batch_size=32, seed=42):
+                num_epochs=50, dropout=0.2, batch_size=32, seed=42, 
+                val_data=None, verbose=True):
     """
-    Train the LSTM model with minibatch gradient descent.
+    Train the LSTM model with advanced techniques: Early Stopping, LR Scheduling, and Regularization.
     
     Args:
         X_train: Training features tensor
@@ -21,6 +22,9 @@ def train_model(X_train, y_train, input_size, hidden_size=50, num_layers=2,
         dropout: Dropout rate
         batch_size: Minibatch size (default 32)
         seed: Random seed for reproducibility
+        bidirectional: Whether to use Bidirectional LSTM
+        val_data: Tuple of (X_val, y_val) for validation
+        verbose: Whether to print progress
         
     Returns:
         Trained model
@@ -30,10 +34,15 @@ def train_model(X_train, y_train, input_size, hidden_size=50, num_layers=2,
 
     model = StockPredictorLSTM(input_size, hidden_size, num_layers, dropout)
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
     
     dataset = TensorDataset(X_train, y_train)
-    loader = TorchDataLoader(dataset, batch_size=batch_size, shuffle=False)
+    loader = TorchDataLoader(dataset, batch_size=batch_size, shuffle=True)
+    patience = 10
+    best_val_loss = float('inf')
+    counter = 0
 
     for epoch in range(num_epochs):
         model.train()
@@ -44,15 +53,46 @@ def train_model(X_train, y_train, input_size, hidden_size=50, num_layers=2,
             optimizer.zero_grad()
             outputs = model(X_batch)
             loss = criterion(outputs.squeeze(), y_batch)
+            
+            if torch.isnan(loss):
+                print(f"nan loss detected at epoch {epoch+1}")
+                return model # Abort training
+                
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
             optimizer.step()
             
             epoch_loss += loss.item()
             num_batches += 1
 
-        if (epoch + 1) % 10 == 0:
-            avg_loss = epoch_loss / num_batches
-            print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
+        avg_train_loss = epoch_loss / num_batches
+        
+        # Validation Phase
+        val_loss = avg_train_loss # Default to train loss if no val data
+        if val_data is not None:
+            model.eval()
+            with torch.no_grad():
+                X_val, y_val = val_data
+                val_preds = model(X_val)
+                val_loss = criterion(val_preds.squeeze(), y_val).item()
+            
+            # Step the scheduler based on validation loss
+            scheduler.step(val_loss)
+            
+            # Early Stopping Logic 
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                counter = 0
+            else:
+                counter += 1
+                if counter >= patience:
+                    if verbose:
+                        print(f"Early stopping triggered at epoch {epoch+1}")
+                    break
+
+        if verbose and (epoch + 1) % 10 == 0:
+            print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
     return model
 

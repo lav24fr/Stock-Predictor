@@ -7,6 +7,9 @@ class TradingStrategy:
         self.initial_capital = initial_capital
 
     def simple_strategy(self, actual_prices, predicted_prices, stop_loss_pct=0.0):
+        actual_prices = np.array(actual_prices).flatten()
+        predicted_prices = np.array(predicted_prices).flatten()
+        
         capital = self.initial_capital
         position = 0
         entry_price = 0
@@ -71,13 +74,16 @@ class TradingStrategy:
         return signals, portfolio_value
 
     def ma_crossover_strategy(self, actual_prices, predicted_prices, short_window=5, long_window=20, stop_loss_pct=0.0):
+        actual_prices = np.array(actual_prices).flatten()
+        predicted_prices = np.array(predicted_prices).flatten()
+        
         capital = self.initial_capital
         position = 0
         entry_price = 0
         portfolio_value = [capital]
         signals = []
 
-        pred_series = pd.Series(predicted_prices.flatten())
+        pred_series = pd.Series(predicted_prices)
         short_ma = pred_series.rolling(window=short_window).mean()
         long_ma = pred_series.rolling(window=long_window).mean()
 
@@ -106,10 +112,11 @@ class TradingStrategy:
                 portfolio_value.append(capital)
                 continue
 
-            curr_short = short_ma[i+1]
-            curr_long = long_ma[i+1]
-            prev_short = short_ma[i]
-            prev_long = long_ma[i]
+            # Use current and previous values (no look-ahead)
+            curr_short = short_ma[i]
+            curr_long = long_ma[i]
+            prev_short = short_ma[i-1] if i > 0 else short_ma[i]
+            prev_long = long_ma[i-1] if i > 0 else long_ma[i]
 
             if curr_short > curr_long and prev_short <= prev_long:
                 if position < 0:
@@ -122,7 +129,7 @@ class TradingStrategy:
                     signals.append(1)
                 else:
                     signals.append(0)
-            elif short_ma[i] < long_ma[i] and short_ma[i - 1] >= long_ma[i - 1]:
+            elif curr_short < curr_long and prev_short >= prev_long:
                 if position > 0:
                     capital += position * price
                     position = 0
@@ -143,6 +150,9 @@ class TradingStrategy:
         return signals, portfolio_value
 
     def darvas_box_strategy(self, actual_prices, predicted_prices, stop_loss_pct=0.0):
+        actual_prices = np.array(actual_prices).flatten()
+        predicted_prices = np.array(predicted_prices).flatten()
+        
         capital = self.initial_capital
         position = 0
         entry_price = 0
@@ -160,7 +170,7 @@ class TradingStrategy:
 
         trailing_stop_price = -1.0
 
-        prices = predicted_prices.flatten()
+        prices = predicted_prices
         actuals = actual_prices
 
         for i in range(len(prices)):
@@ -372,11 +382,16 @@ class TradingStrategy:
                         pred_val = np.array(predicted_prices[i + 1]).flatten()
                         pred_next_price = float(pred_val[0]) if len(pred_val) > 0 else current_close
                         expected_move = pred_next_price - current_close
-                        is_meaningful_move = bool(expected_move > (0.1 * atr))
+                        expected_pct_move = expected_move / current_close if current_close > 0 else 0
                         
-                        if trend_is_up and is_meaningful_move:
+                        # Relaxed conditions: either ATR-based OR percentage-based threshold
+                        # ATR threshold lowered from 0.1 to 0.02 for more trades
+                        is_meaningful_atr_move = atr > 0 and expected_move > (0.02 * atr)
+                        is_meaningful_pct_move = expected_pct_move > 0.002  # 0.2% predicted up move
+                        
+                        if trend_is_up and (is_meaningful_atr_move or is_meaningful_pct_move):
                             pending_entry = True
-                            pending_entry_atr = atr
+                            pending_entry_atr = atr if atr > 0 else current_close * 0.02  # Fallback ATR
             
             val = capital + (position * current_close)
             portfolio_value.append(val)
